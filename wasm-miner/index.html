@@ -32,13 +32,24 @@
 
                     <div class="form-group">
                         <label for="walletAddress">Wallet Address</label>
-                        <input 
-                            type="text" 
-                            id="walletAddress" 
-                            placeholder="Your Stellaris wallet address"
-                            required
-                            minlength="40"
-                        >
+                        <div style="display: flex; gap: 8px;">
+                            <input 
+                                type="text" 
+                                id="walletAddress" 
+                                placeholder="Your Stellaris wallet address"
+                                required
+                                minlength="40"
+                                style="flex: 1;"
+                            >
+                            <button 
+                                type="button" 
+                                id="connectQuasarBtn" 
+                                class="btn btn-secondary"
+                                style="display: none; white-space: nowrap;"
+                            >
+                                🔌 Connect Quasar
+                            </button>
+                        </div>
                         <small>Enter your Stellaris wallet address to receive mining rewards</small>
                     </div>
 
@@ -145,6 +156,7 @@
         const startBtn = document.getElementById('startBtn');
         const stopBtn = document.getElementById('stopBtn');
         const clearLogBtn = document.getElementById('clearLogBtn');
+        const connectQuasarBtn = document.getElementById('connectQuasarBtn');
         const poolUrlInput = document.getElementById('poolUrl');
         const walletAddressInput = document.getElementById('walletAddress');
         const workerNameInput = document.getElementById('workerName');
@@ -168,6 +180,62 @@
         poolUrlInput.value = localStorage.getItem('poolUrl') || poolUrlInput.value;
         walletAddressInput.value = localStorage.getItem('walletAddress') || '';
         workerNameInput.value = localStorage.getItem('workerName') || '';
+
+        // Check for Quasar wallet and show connect button if available
+        function checkQuasarWallet() {
+            if (typeof window.quasar !== 'undefined') {
+                connectQuasarBtn.style.display = 'block';
+                console.log('✅ Quasar wallet detected');
+            } else {
+                connectQuasarBtn.style.display = 'none';
+            }
+        }
+
+        // Connect to Quasar wallet
+        async function connectQuasar() {
+            try {
+                if (typeof window.quasar === 'undefined') {
+                    console.log('❌ Quasar wallet not detected. Please install the Quasar browser extension.');
+                    return;
+                }
+
+                console.log('🔌 Connecting to Quasar wallet...');
+                connectQuasarBtn.disabled = true;
+                connectQuasarBtn.textContent = '⏳ Connecting...';
+
+                // Connect to Quasar with filtering for Stellaris addresses
+                const accounts = await window.quasar.connect({
+                    filter: {
+                        chains: ['Stellaris']
+                    }
+                });
+
+                if (accounts && accounts.length > 0) {
+                    const address = accounts[0].address;
+                    walletAddressInput.value = address;
+                    localStorage.setItem('walletAddress', address);
+                    console.log(`✅ Connected to Quasar wallet: ${address.substring(0, 12)}...`);
+                } else {
+                    console.log('❌ No Stellaris accounts found in Quasar wallet');
+                }
+
+                connectQuasarBtn.disabled = false;
+                connectQuasarBtn.textContent = '🔌 Connect Quasar';
+            } catch (error) {
+                console.log(`❌ Failed to connect to Quasar: ${error.message}`);
+                connectQuasarBtn.disabled = false;
+                connectQuasarBtn.textContent = '🔌 Connect Quasar';
+            }
+        }
+
+        // Attach event listener to Quasar button
+        connectQuasarBtn.addEventListener('click', connectQuasar);
+
+        // Check for Quasar on page load
+        checkQuasarWallet();
+
+        // Also check after a short delay in case the wallet injects later
+        setTimeout(checkQuasarWallet, 1000);
 
         // Add log entry (used by console.log override and manually)
         function addLog(message) {
