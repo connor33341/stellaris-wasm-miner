@@ -1,0 +1,28 @@
+# Stellaris WASM Miner Configuration Example
+
+## Pool Configuration
+POOL_URL=https://stellaris-pool.connor33341.dev
+
+## Wallet Configuration
+# Replace with your actual Stellaris wallet address
+WALLET_ADDRESS=your_stellaris_wallet_address_here
+
+## Worker Configuration (Optional)
+# Leave empty for auto-generated name
+WORKER_NAME=my-browser-miner
+
+## Performance Notes
+# - Keep browser tab active for best performance
+# - Close other resource-intensive tabs
+# - Use a modern browser (Chrome, Firefox, Edge)
+# - Typical hashrate: 5-20 kH/s depending on CPU
+
+## Browser Recommendations
+# 1. Chrome/Edge - Best WASM performance
+# 2. Firefox - Good WASM performance
+# 3. Safari - Moderate WASM performance
+
+## Mining Strategy
+# - Browser mining is best for contributing to a pool
+# - Not suitable for solo mining due to lower hashrate
+# - Keep multiple instances across devices for better results
