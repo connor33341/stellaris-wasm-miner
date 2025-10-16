@@ -164,6 +164,11 @@
         // Log element
         const logEl = document.getElementById('log');
 
+        // Load saved config from localStorage
+        poolUrlInput.value = localStorage.getItem('poolUrl') || poolUrlInput.value;
+        walletAddressInput.value = localStorage.getItem('walletAddress') || '';
+        workerNameInput.value = localStorage.getItem('workerName') || '';
+
         // Add log entry (used by console.log override and manually)
         function addLog(message) {
             const timestamp = new Date().toLocaleTimeString();
@@ -230,6 +235,11 @@
                 console.log('❌ Invalid wallet address (too short)');
                 return;
             }
+
+            // Save config to localStorage
+            localStorage.setItem('poolUrl', poolUrl);
+            localStorage.setItem('walletAddress', walletAddress);
+            localStorage.setItem('workerName', workerName);
 
             startBtn.disabled = true;
             stopBtn.disabled = false;
