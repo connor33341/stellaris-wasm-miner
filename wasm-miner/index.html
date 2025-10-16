@@ -64,18 +64,33 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="threadCount">
-                            Mining Threads: <span id="threadCountValue">4</span>
+                        <label for="poolShares">
+                            Pool Shares: <span id="poolSharesValue">1</span>
                         </label>
                         <input 
                             type="range" 
-                            id="threadCount" 
+                            id="poolShares" 
                             min="1" 
-                            max="100" 
+                            max="10" 
+                            value="1"
+                            step="1"
+                        >
+                        <small>Number of parallel work units to fetch from pool</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="workersPerShare">
+                            Workers per Share: <span id="workersPerShareValue">4</span>
+                        </label>
+                        <input 
+                            type="range" 
+                            id="workersPerShare" 
+                            min="1" 
+                            max="20" 
                             value="4"
                             step="1"
                         >
-                        <small>Number of parallel workers (more threads = higher CPU usage)</small>
+                        <small>Number of worker threads per share (Total: <span id="totalWorkersValue">4</span> workers)</small>
                     </div>
 
                     <div class="button-group">
@@ -175,8 +190,11 @@
         const poolUrlInput = document.getElementById('poolUrl');
         const walletAddressInput = document.getElementById('walletAddress');
         const workerNameInput = document.getElementById('workerName');
-        const threadCountInput = document.getElementById('threadCount');
-        const threadCountValue = document.getElementById('threadCountValue');
+        const poolSharesInput = document.getElementById('poolShares');
+        const poolSharesValue = document.getElementById('poolSharesValue');
+        const workersPerShareInput = document.getElementById('workersPerShare');
+        const workersPerShareValue = document.getElementById('workersPerShareValue');
+        const totalWorkersValue = document.getElementById('totalWorkersValue');
 
         // Status elements
         const statusEl = document.getElementById('status');
@@ -197,13 +215,25 @@
         poolUrlInput.value = localStorage.getItem('poolUrl') || poolUrlInput.value;
         walletAddressInput.value = localStorage.getItem('walletAddress') || '';
         workerNameInput.value = localStorage.getItem('workerName') || '';
-        threadCountInput.value = localStorage.getItem('threadCount') || '4';
-        threadCountValue.textContent = threadCountInput.value;
+        poolSharesInput.value = localStorage.getItem('poolShares') || '1';
+        workersPerShareInput.value = localStorage.getItem('workersPerShare') || '4';
+        poolSharesValue.textContent = poolSharesInput.value;
+        workersPerShareValue.textContent = workersPerShareInput.value;
+        totalWorkersValue.textContent = poolSharesInput.value * workersPerShareInput.value;
 
-        // Update thread count display
-        threadCountInput.addEventListener('input', (e) => {
-            threadCountValue.textContent = e.target.value;
-        });
+        // Update slider displays
+        function updateWorkerCounts() {
+            const shares = parseInt(poolSharesInput.value);
+            const workersPerShare = parseInt(workersPerShareInput.value);
+            const total = shares * workersPerShare;
+            
+            poolSharesValue.textContent = shares;
+            workersPerShareValue.textContent = workersPerShare;
+            totalWorkersValue.textContent = total;
+        }
+
+        poolSharesInput.addEventListener('input', updateWorkerCounts);
+        workersPerShareInput.addEventListener('input', updateWorkerCounts);
 
         // Check for Quasar wallet and show connect button if available
         function checkQuasarWallet() {
@@ -317,7 +347,8 @@
             const poolUrl = poolUrlInput.value.trim();
             const walletAddress = walletAddressInput.value.trim();
             const workerName = workerNameInput.value.trim() || null;
-            const threadCount = parseInt(threadCountInput.value);
+            const poolShares = parseInt(poolSharesInput.value);
+            const workersPerShare = parseInt(workersPerShareInput.value);
 
             if (!poolUrl || !walletAddress) {
                 console.log('❌ Please fill in all required fields');
@@ -333,22 +364,26 @@
             localStorage.setItem('poolUrl', poolUrl);
             localStorage.setItem('walletAddress', walletAddress);
             localStorage.setItem('workerName', workerName);
-            localStorage.setItem('threadCount', threadCount);
+            localStorage.setItem('poolShares', poolShares);
+            localStorage.setItem('workersPerShare', workersPerShare);
 
             startBtn.disabled = true;
             stopBtn.disabled = false;
             poolUrlInput.disabled = true;
             walletAddressInput.disabled = true;
             workerNameInput.disabled = true;
-            threadCountInput.disabled = true;
+            poolSharesInput.disabled = true;
+            workersPerShareInput.disabled = true;
 
             console.log(`🚀 Starting mining...`);
             console.log(`   Pool: ${poolUrl}`);
             console.log(`   Wallet: ${walletAddress.substring(0, 12)}...`);
-            console.log(`   Threads: ${threadCount}`);
+            console.log(`   Pool Shares: ${poolShares}`);
+            console.log(`   Workers per Share: ${workersPerShare}`);
+            console.log(`   Total Workers: ${poolShares * workersPerShare}`);
 
             try {
-                await miner.startMining(poolUrl, walletAddress, workerName, threadCount);
+                await miner.startMining(poolUrl, walletAddress, workerName, poolShares, workersPerShare);
             } catch (error) {
                 console.log(`❌ Failed to start mining: ${error.message}`);
                 stopMining();
@@ -369,7 +404,8 @@
             poolUrlInput.disabled = false;
             walletAddressInput.disabled = false;
             workerNameInput.disabled = false;
-            threadCountInput.disabled = false;
+            poolSharesInput.disabled = false;
+            workersPerShareInput.disabled = false;
             console.log('⏹️ Mining stopped');
         }
 

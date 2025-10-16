@@ -12,7 +12,9 @@ class StellarisMiner {
         this.workerName = '';
         this.minerId = '';
         this.workers = [];
-        this.threadCount = 1;
+        this.poolShares = 1;
+        this.workersPerShare = 1;
+        this.shares = []; // Track active shares
         this.stats = {
             hashrate: 0,
             totalHashes: 0,
@@ -25,7 +27,6 @@ class StellarisMiner {
         };
         this.hashrateSamples = [];
         this.maxSamples = 10;
-        this.currentWork = null;
         this.workersReady = 0;
     }
 
@@ -136,7 +137,7 @@ class StellarisMiner {
         }
     }
 
-    async startMining(poolUrl, walletAddress, workerName = null, threadCount = 1) {
+    async startMining(poolUrl, walletAddress, workerName = null, poolShares = 1, workersPerShare = 1) {
         if (this.mining) {
             console.log('⚠️ Mining already in progress');
             return;
@@ -150,7 +151,8 @@ class StellarisMiner {
         this.walletAddress = walletAddress;
         this.workerName = workerName || this.generateWorkerName();
         this.minerId = `${walletAddress.substring(0, 12)}_${this.workerName}`;
-        this.threadCount = threadCount;
+        this.poolShares = poolShares;
+        this.workersPerShare = workersPerShare;
         this.mining = true;
         this.stats.startTime = Date.now();
         this.stats.totalHashes = 0;
@@ -158,11 +160,15 @@ class StellarisMiner {
         this.stats.blocksFound = 0;
         this.stats.workUnits = 0;
 
+        const totalWorkers = poolShares * workersPerShare;
+
         console.log(`🚀 Starting mining`);
         console.log(`   Pool: ${this.poolUrl}`);
         console.log(`   Wallet: ${this.walletAddress}`);
         console.log(`   Worker: ${this.workerName}`);
-        console.log(`   Threads: ${this.threadCount}`);
+        console.log(`   Pool Shares: ${this.poolShares}`);
+        console.log(`   Workers per Share: ${this.workersPerShare}`);
+        console.log(`   Total Workers: ${totalWorkers}`);
 
         // Register with pool
         if (!await this.register()) {
@@ -171,18 +177,18 @@ class StellarisMiner {
         }
 
         // Initialize workers
-        await this.initWorkers();
+        await this.initWorkers(totalWorkers);
 
         this.updateStatus('Mining...');
         this.mineLoop();
     }
 
-    async initWorkers() {
-        console.log(`🔧 Initializing ${this.threadCount} worker thread(s)...`);
+    async initWorkers(totalWorkers) {
+        console.log(`🔧 Initializing ${totalWorkers} worker thread(s)...`);
         this.workers = [];
         this.workersReady = 0;
 
-        for (let i = 0; i < this.threadCount; i++) {
+        for (let i = 0; i < totalWorkers; i++) {
             const worker = new Worker('./mining-worker.js', { type: 'module' });
             
             worker.onmessage = (e) => this.handleWorkerMessage(e, i);
@@ -193,6 +199,7 @@ class StellarisMiner {
             this.workers.push({
                 worker: worker,
                 id: i,
+                shareId: null, // Which share this worker is assigned to
                 mining: false,
                 stats: {
                     hashes: 0,
@@ -213,9 +220,9 @@ class StellarisMiner {
         // Wait for all workers to initialize
         return new Promise((resolve) => {
             const checkInterval = setInterval(() => {
-                if (this.workersReady >= this.threadCount) {
+                if (this.workersReady >= totalWorkers) {
                     clearInterval(checkInterval);
-                    console.log(`✅ All ${this.threadCount} worker(s) ready`);
+                    console.log(`✅ All ${totalWorkers} worker(s) ready`);
                     resolve();
                 }
             }, 100);
@@ -256,39 +263,44 @@ class StellarisMiner {
         // Update hashrate
         this.updateHashrateFromWorkers();
 
-        // Update best hash for this work unit
-        if (this.currentWork) {
-            if (!this.currentWork.bestHash || result.best_hash < this.currentWork.bestHash) {
-                this.currentWork.bestHash = result.best_hash;
-                this.currentWork.bestNonce = result.best_nonce;
-            }
-            this.currentWork.totalHashes += result.hashes_computed;
+        // Find which share this worker belongs to
+        const shareId = worker.shareId;
+        const share = this.shares[shareId];
+        
+        if (!share) return;
+
+        // Update best hash for this share
+        if (!share.bestHash || result.best_hash < share.bestHash) {
+            share.bestHash = result.best_hash;
+            share.bestNonce = result.best_nonce;
         }
+        share.totalHashes += result.hashes_computed;
 
         // Check if block found
         if (result.found) {
             console.log('🎉🎉🎉 VALID BLOCK FOUND! 🎉🎉🎉');
+            console.log(`   Share: ${shareId}`);
             console.log(`   Worker: ${workerId}`);
             console.log(`   Nonce: ${result.nonce.toLocaleString()}`);
             console.log(`   Hash: ${result.hash}`);
             
-            // Stop all workers for this round
-            this.stopAllWorkers();
+            // Stop all workers for this share
+            this.stopShareWorkers(shareId);
 
-            if (this.currentWork) {
+            if (share) {
                 // Build block content
                 const blockContentHex = this.wasmModule.build_block_content(
-                    this.currentWork.previous_hash,
-                    this.currentWork.pool_address,
-                    this.currentWork.merkle_root,
-                    this.currentWork.timestamp,
-                    this.currentWork.difficulty,
+                    share.previous_hash,
+                    share.pool_address,
+                    share.merkle_root,
+                    share.timestamp,
+                    share.difficulty,
                     result.nonce
                 );
 
                 // Submit block
                 const response = await this.submitShare(
-                    this.currentWork.block_height,
+                    share.block_height,
                     result.nonce,
                     blockContentHex,
                     result.hash,
@@ -300,9 +312,18 @@ class StellarisMiner {
                     this.updateStatus(`🎉 BLOCK FOUND! Total: ${this.stats.blocksFound}`);
                 }
 
-                // Mark that we found a block and clear current work
-                // This signals to the main loop not to submit work proof
-                this.currentWork = null;
+                // Mark share as complete (block found)
+                share.blockFound = true;
+                share.complete = true;
+            }
+        }
+    }
+
+    stopShareWorkers(shareId) {
+        for (const worker of this.workers) {
+            if (worker.shareId === shareId && worker.mining) {
+                worker.worker.postMessage({ type: 'stop' });
+                worker.mining = false;
             }
         }
     }
@@ -358,168 +379,168 @@ class StellarisMiner {
 
         while (this.mining) {
             try {
-                // Get work from pool
-                const work = await this.getWork();
+                // Fetch work for all pool shares
+                console.log(`🔄 Fetching ${this.poolShares} work unit(s) from pool...`);
+                const workUnits = [];
                 
-                if (!work || !work.block_height) {
+                for (let i = 0; i < this.poolShares; i++) {
+                    const work = await this.getWork();
+                    if (work && work.block_height) {
+                        workUnits.push(work);
+                    } else {
+                        console.log(`⚠️ Could not fetch work unit ${i + 1}/${this.poolShares}`);
+                    }
+                }
+
+                if (workUnits.length === 0) {
                     console.log('⚠️ No work available, waiting...');
                     this.updateStatus('No work available, waiting...');
                     await this.sleep(5000);
                     continue;
                 }
 
-                const {
-                    block_height,
-                    difficulty,
-                    previous_hash,
-                    merkle_root,
-                    timestamp,
-                    nonce_start,
-                    nonce_end,
-                    pool_address
-                } = work;
-
-                this.stats.currentBlock = block_height;
-                console.log(`⛏️ Mining block #${block_height}, difficulty ${difficulty}`);
-                console.log(`   Nonce range: ${nonce_start.toLocaleString()} - ${nonce_end.toLocaleString()}`);
-                console.log(`   Total range: ${(nonce_end - nonce_start).toLocaleString()} nonces`);
+                console.log(`✅ Got ${workUnits.length} work unit(s)`);
                 
-                this.updateStatus(`Mining block #${block_height}`);
-
-                // Initialize work tracking
-                this.currentWork = {
-                    block_height,
-                    difficulty,
-                    previous_hash,
-                    merkle_root,
-                    timestamp,
-                    nonce_start,
-                    nonce_end,
-                    pool_address,
+                // Initialize shares
+                this.shares = workUnits.map((work, idx) => ({
+                    id: idx,
+                    block_height: work.block_height,
+                    difficulty: work.difficulty,
+                    previous_hash: work.previous_hash,
+                    merkle_root: work.merkle_root,
+                    timestamp: work.timestamp,
+                    nonce_start: work.nonce_start,
+                    nonce_end: work.nonce_end,
+                    pool_address: work.pool_address,
                     bestHash: 'f'.repeat(64),
-                    bestNonce: nonce_start,
+                    bestNonce: work.nonce_start,
                     totalHashes: 0,
-                    startTime: Date.now()
-                };
+                    startTime: Date.now(),
+                    complete: false,
+                    blockFound: false
+                }));
 
-                // Divide the nonce range among workers
-                const totalRange = nonce_end - nonce_start;
-                const rangePerWorker = Math.ceil(totalRange / this.threadCount);
-
-                // Reset worker stats
-                for (const worker of this.workers) {
-                    worker.stats.hashes = 0;
-                    worker.stats.lastUpdate = Date.now();
+                // Log all shares
+                for (const share of this.shares) {
+                    this.stats.currentBlock = share.block_height;
+                    console.log(`📦 Share ${share.id}: Block #${share.block_height}, difficulty ${share.difficulty}`);
+                    console.log(`   Nonce range: ${share.nonce_start.toLocaleString()} - ${share.nonce_end.toLocaleString()}`);
                 }
 
-                // Start all workers with their assigned ranges
-                const workerPromises = [];
-                for (let i = 0; i < this.threadCount; i++) {
-                    const workerStart = nonce_start + (i * rangePerWorker);
-                    const workerEnd = Math.min(workerStart + rangePerWorker, nonce_end);
+                // Assign workers to shares and start mining
+                const allPromises = [];
+                let workerIdx = 0;
+
+                for (let shareIdx = 0; shareIdx < this.shares.length; shareIdx++) {
+                    const share = this.shares[shareIdx];
+                    const shareWorkers = [];
                     
-                    if (workerStart >= nonce_end) break;
+                    // Assign workersPerShare to this share
+                    for (let i = 0; i < this.workersPerShare && workerIdx < this.workers.length; i++, workerIdx++) {
+                        shareWorkers.push(this.workers[workerIdx]);
+                        this.workers[workerIdx].shareId = shareIdx;
+                        this.workers[workerIdx].stats.hashes = 0;
+                        this.workers[workerIdx].stats.lastUpdate = Date.now();
+                    }
 
-                    console.log(`   Worker ${i}: ${workerStart.toLocaleString()} - ${workerEnd.toLocaleString()}`);
+                    console.log(`   Share ${shareIdx}: ${shareWorkers.length} worker(s) (Worker IDs: ${shareWorkers.map(w => w.id).join(', ')})`);
 
-                    this.workers[i].mining = true;
-                    this.workers[i].worker.postMessage({
-                        type: 'mine',
-                        data: {
-                            previous_hash,
-                            pool_address,
-                            merkle_root,
-                            timestamp,
-                            difficulty,
-                            nonce_start: workerStart,
-                            nonce_end: workerEnd,
-                            chunk_size: chunkSize
-                        }
-                    });
+                    // Divide nonce range among workers for this share
+                    const totalRange = share.nonce_end - share.nonce_start;
+                    const rangePerWorker = Math.ceil(totalRange / shareWorkers.length);
 
-                    // Create a promise that resolves when this worker completes
-                    workerPromises.push(new Promise((resolve) => {
-                        const checkInterval = setInterval(() => {
-                            if (!this.workers[i].mining || !this.mining) {
-                                clearInterval(checkInterval);
-                                resolve();
+                    for (let i = 0; i < shareWorkers.length; i++) {
+                        const worker = shareWorkers[i];
+                        const workerStart = share.nonce_start + (i * rangePerWorker);
+                        const workerEnd = Math.min(workerStart + rangePerWorker, share.nonce_end);
+                        
+                        if (workerStart >= share.nonce_end) break;
+
+                        worker.mining = true;
+                        worker.worker.postMessage({
+                            type: 'mine',
+                            data: {
+                                previous_hash: share.previous_hash,
+                                pool_address: share.pool_address,
+                                merkle_root: share.merkle_root,
+                                timestamp: share.timestamp,
+                                difficulty: share.difficulty,
+                                nonce_start: workerStart,
+                                nonce_end: workerEnd,
+                                chunk_size: chunkSize
                             }
-                        }, 100);
-                    }));
+                        });
+
+                        // Create promise for this worker
+                        allPromises.push(new Promise((resolve) => {
+                            const checkInterval = setInterval(() => {
+                                if (!worker.mining || !this.mining) {
+                                    clearInterval(checkInterval);
+                                    resolve();
+                                }
+                            }, 100);
+                        }));
+                    }
                 }
 
-                // Update hashrate periodically while mining
+                // Update hashrate and status periodically
                 const hashrateInterval = setInterval(() => {
                     if (!this.mining) {
                         clearInterval(hashrateInterval);
                         return;
                     }
                     this.updateHashrateFromWorkers();
-                    this.updateStatus(`Mining block #${block_height} (${this.threadCount} threads)`);
+                    const activeShares = this.shares.filter(s => !s.complete).length;
+                    this.updateStatus(`Mining ${activeShares} share(s) with ${this.poolShares * this.workersPerShare} workers`);
                 }, 1000);
 
-                // Wait for all workers to complete their ranges or find a block
-                await Promise.race([
-                    Promise.all(workerPromises),
-                    this.waitForBlockFound()
-                ]);
-
+                // Wait for all workers to complete
+                await Promise.all(allPromises);
                 clearInterval(hashrateInterval);
 
-                // Check worker completion status
-                const allWorkersComplete = this.workers.every(w => !w.mining);
-                const workersStillMining = this.workers.filter(w => w.mining).length;
-                
-                console.log(`📊 Mining round complete:`);
-                console.log(`   Workers complete: ${allWorkersComplete ? 'Yes' : `No (${workersStillMining} still mining)`}`);
-                console.log(`   Current work exists: ${this.currentWork ? 'Yes' : 'No (block found)'}`);
-
-                // Save current work data before it might be cleared
-                const workData = this.currentWork ? {
-                    block_height: this.currentWork.block_height,
-                    nonce_start,
-                    nonce_end,
-                    bestNonce: this.currentWork.bestNonce,
-                    bestHash: this.currentWork.bestHash,
-                    totalHashes: this.currentWork.totalHashes
-                } : null;
-
-                // Check if a block was found (currentWork would be null if block found)
-                const blockFound = !this.currentWork;
-
-                // Submit work proof if we didn't find a block and all workers completed
-                if (this.mining && !blockFound && workData && allWorkersComplete) {
-                    console.log(`📊 Submitting work proof: ${workData.totalHashes.toLocaleString()} hashes`);
-                    console.log(`   Best hash: ${workData.bestHash.substring(0, 16)}...`);
-                    
-                    const response = await this.submitWorkProof(
-                        workData.block_height,
-                        workData.nonce_start,
-                        workData.nonce_end,
-                        workData.bestNonce,
-                        workData.bestHash,
-                        workData.totalHashes
-                    );
-
-                    if (response && response.success) {
-                        this.stats.sharesSubmitted++;
-                        const workUnits = response.work_units || 0;
-                        this.stats.workUnits += workUnits;
-                        console.log(`✅ Work proof accepted (${workUnits} work units this round)`);
-                        this.updateStatus(`Work accepted - ${this.stats.sharesSubmitted} shares submitted`);
-                    } else {
-                        console.log(`❌ Work proof rejected or error: ${JSON.stringify(response)}`);
+                // Process completed shares
+                for (const share of this.shares) {
+                    if (share.complete) {
+                        if (share.blockFound) {
+                            console.log(`✅ Share ${share.id}: Block found!`);
+                        }
+                        continue;
                     }
-                } else if (!allWorkersComplete) {
-                    console.log(`⚠️ Not submitting work proof - not all workers complete`);
-                } else if (!this.mining) {
-                    console.log(`⚠️ Not submitting work proof - mining stopped`);
+
+                    // Check if all workers for this share completed
+                    const shareWorkers = this.workers.filter(w => w.shareId === share.id);
+                    const allComplete = shareWorkers.every(w => !w.mining);
+
+                    if (allComplete) {
+                        console.log(`📊 Share ${share.id}: Submitting work proof (${share.totalHashes.toLocaleString()} hashes)`);
+                        
+                        const response = await this.submitWorkProof(
+                            share.block_height,
+                            share.nonce_start,
+                            share.nonce_end,
+                            share.bestNonce,
+                            share.bestHash,
+                            share.totalHashes
+                        );
+
+                        if (response && response.success) {
+                            this.stats.sharesSubmitted++;
+                            const workUnits = response.work_units || 0;
+                            this.stats.workUnits += workUnits;
+                            console.log(`✅ Share ${share.id}: Work proof accepted (${workUnits} work units)`);
+                            this.updateStatus(`${this.stats.sharesSubmitted} work proofs accepted`);
+                        } else {
+                            console.log(`❌ Share ${share.id}: Work proof rejected`);
+                        }
+
+                        share.complete = true;
+                    }
                 }
 
-                // Reset current work
-                this.currentWork = null;
+                // Reset shares
+                this.shares = [];
 
-                // Small delay before next work request
+                // Small delay before next round
                 await this.sleep(100);
 
             } catch (error) {
@@ -528,18 +549,6 @@ class StellarisMiner {
                 await this.sleep(5000);
             }
         }
-    }
-
-    async waitForBlockFound() {
-        return new Promise((resolve) => {
-            const checkInterval = setInterval(() => {
-                if (!this.mining || !this.currentWork || 
-                    this.workers.every(w => !w.mining)) {
-                    clearInterval(checkInterval);
-                    resolve();
-                }
-            }, 100);
-        });
     }
 
     updateStatus(message) {
