@@ -63,6 +63,21 @@
                         <small>Identify this miner in your pool dashboard</small>
                     </div>
 
+                    <div class="form-group">
+                        <label for="threadCount">
+                            Mining Threads: <span id="threadCountValue">4</span>
+                        </label>
+                        <input 
+                            type="range" 
+                            id="threadCount" 
+                            min="1" 
+                            max="100" 
+                            value="4"
+                            step="1"
+                        >
+                        <small>Number of parallel workers (more threads = higher CPU usage)</small>
+                    </div>
+
                     <div class="button-group">
                         <button type="submit" id="startBtn" class="btn btn-primary">
                             🚀 Start Mining
@@ -160,6 +175,8 @@
         const poolUrlInput = document.getElementById('poolUrl');
         const walletAddressInput = document.getElementById('walletAddress');
         const workerNameInput = document.getElementById('workerName');
+        const threadCountInput = document.getElementById('threadCount');
+        const threadCountValue = document.getElementById('threadCountValue');
 
         // Status elements
         const statusEl = document.getElementById('status');
@@ -180,6 +197,13 @@
         poolUrlInput.value = localStorage.getItem('poolUrl') || poolUrlInput.value;
         walletAddressInput.value = localStorage.getItem('walletAddress') || '';
         workerNameInput.value = localStorage.getItem('workerName') || '';
+        threadCountInput.value = localStorage.getItem('threadCount') || '4';
+        threadCountValue.textContent = threadCountInput.value;
+
+        // Update thread count display
+        threadCountInput.addEventListener('input', (e) => {
+            threadCountValue.textContent = e.target.value;
+        });
 
         // Check for Quasar wallet and show connect button if available
         function checkQuasarWallet() {
@@ -293,6 +317,7 @@
             const poolUrl = poolUrlInput.value.trim();
             const walletAddress = walletAddressInput.value.trim();
             const workerName = workerNameInput.value.trim() || null;
+            const threadCount = parseInt(threadCountInput.value);
 
             if (!poolUrl || !walletAddress) {
                 console.log('❌ Please fill in all required fields');
@@ -308,19 +333,22 @@
             localStorage.setItem('poolUrl', poolUrl);
             localStorage.setItem('walletAddress', walletAddress);
             localStorage.setItem('workerName', workerName);
+            localStorage.setItem('threadCount', threadCount);
 
             startBtn.disabled = true;
             stopBtn.disabled = false;
             poolUrlInput.disabled = true;
             walletAddressInput.disabled = true;
             workerNameInput.disabled = true;
+            threadCountInput.disabled = true;
 
             console.log(`🚀 Starting mining...`);
             console.log(`   Pool: ${poolUrl}`);
             console.log(`   Wallet: ${walletAddress.substring(0, 12)}...`);
+            console.log(`   Threads: ${threadCount}`);
 
             try {
-                await miner.startMining(poolUrl, walletAddress, workerName);
+                await miner.startMining(poolUrl, walletAddress, workerName, threadCount);
             } catch (error) {
                 console.log(`❌ Failed to start mining: ${error.message}`);
                 stopMining();
@@ -341,6 +369,7 @@
             poolUrlInput.disabled = false;
             walletAddressInput.disabled = false;
             workerNameInput.disabled = false;
+            threadCountInput.disabled = false;
             console.log('⏹️ Mining stopped');
         }
 
