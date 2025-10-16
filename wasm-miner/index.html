@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Stellaris WASM Miner</title>
     <link rel="stylesheet" href="styles.css">
+    <script src="miner.js"></script>
 </head>
 <body>
     <div class="container">
@@ -134,9 +135,7 @@
         </footer>
     </div>
 
-    <script type="module">
-        import { StellarisMiner } from './miner.js';
-
+    <script>
         let miner = null;
         let logEntries = [];
         const maxLogEntries = 100;
@@ -165,36 +164,70 @@
         // Log element
         const logEl = document.getElementById('log');
 
+        // Add log entry (used by console.log override and manually)
+        function addLog(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = `[${timestamp}] ${message}`;
+            logEntries.push(entry);
+            if (logEntries.length > maxLogEntries) {
+                logEntries.shift();
+            }
+            const logLine = document.createElement('div');
+            logLine.className = 'log-entry';
+            logLine.textContent = entry;
+            logEl.appendChild(logLine);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        // Override console.log to always add to log panel
+        const originalLog = window.console.log;
+        window.console.log = function(...args) {
+            originalLog.apply(window.console, args);
+            addLog(args.map(String).join(' '));
+        };
+
+        // Prevent form submission from refreshing page - attach IMMEDIATELY
+        configForm.onsubmit = function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            handleFormSubmit();
+            return false;
+        };
+
         // Initialize miner on page load
         async function init() {
             try {
-                addLog('Initializing WASM miner...');
+                console.log('Initializing WASM miner...');
+                // StellarisMiner is now available from miner.js script tag
+                if (typeof StellarisMiner === 'undefined') {
+                    throw new Error('StellarisMiner class not found. Make sure miner.js is loaded.');
+                }
                 miner = new StellarisMiner();
                 await miner.init('./pkg/stellaris_wasm_miner.js');
-                addLog('✅ WASM miner ready');
+                console.log('✅ WASM miner ready');
             } catch (error) {
-                addLog(`❌ Failed to initialize miner: ${error.message}`);
+                console.log(`❌ Failed to initialize miner: ${error.message}`);
+                console.log(`Error stack: ${error.stack}`);
                 startBtn.disabled = true;
                 statusEl.textContent = 'Failed to load';
                 statusEl.classList.add('error');
             }
         }
 
-        // Start mining
-        configForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
+        // Handle form submission
+        async function handleFormSubmit() {
+
             const poolUrl = poolUrlInput.value.trim();
             const walletAddress = walletAddressInput.value.trim();
             const workerName = workerNameInput.value.trim() || null;
 
             if (!poolUrl || !walletAddress) {
-                addLog('❌ Please fill in all required fields');
+                console.log('❌ Please fill in all required fields');
                 return;
             }
 
             if (walletAddress.length < 40) {
-                addLog('❌ Invalid wallet address (too short)');
+                console.log('❌ Invalid wallet address (too short)');
                 return;
             }
 
@@ -204,17 +237,17 @@
             walletAddressInput.disabled = true;
             workerNameInput.disabled = true;
 
-            addLog(`🚀 Starting mining...`);
-            addLog(`   Pool: ${poolUrl}`);
-            addLog(`   Wallet: ${walletAddress.substring(0, 12)}...`);
+            console.log(`🚀 Starting mining...`);
+            console.log(`   Pool: ${poolUrl}`);
+            console.log(`   Wallet: ${walletAddress.substring(0, 12)}...`);
 
             try {
                 await miner.startMining(poolUrl, walletAddress, workerName);
             } catch (error) {
-                addLog(`❌ Failed to start mining: ${error.message}`);
+                console.log(`❌ Failed to start mining: ${error.message}`);
                 stopMining();
             }
-        });
+        }
 
         // Stop mining
         stopBtn.addEventListener('click', () => {
@@ -225,14 +258,12 @@
             if (miner) {
                 miner.stopMining();
             }
-            
             startBtn.disabled = false;
             stopBtn.disabled = true;
             poolUrlInput.disabled = false;
             walletAddressInput.disabled = false;
             workerNameInput.disabled = false;
-
-            addLog('⏹️ Mining stopped');
+            console.log('⏹️ Mining stopped');
         }
 
         // Clear log
@@ -244,19 +275,14 @@
         // Listen for miner status updates
         document.addEventListener('miner-status', (e) => {
             const { message, stats } = e.detail;
-            
-            // Update status
             statusEl.textContent = message;
             statusEl.classList.remove('error');
-            
-            // Update stats
             updateStats(stats);
         });
 
         // Update statistics display
         function updateStats(stats) {
             if (!stats) return;
-
             currentBlockEl.textContent = stats.currentBlock ? `#${stats.currentBlock}` : '-';
             hashrateEl.textContent = formatNumber(stats.hashrate);
             totalHashesEl.textContent = formatNumber(stats.totalHashes);
@@ -264,27 +290,6 @@
             blocksFoundEl.textContent = formatNumber(stats.blocksFound);
             workUnitsEl.textContent = formatNumber(stats.workUnits);
             uptimeEl.textContent = formatUptime(stats.uptime);
-        }
-
-        // Add log entry
-        function addLog(message) {
-            const timestamp = new Date().toLocaleTimeString();
-            const entry = `[${timestamp}] ${message}`;
-            
-            logEntries.push(entry);
-            if (logEntries.length > maxLogEntries) {
-                logEntries.shift();
-            }
-
-            const logLine = document.createElement('div');
-            logLine.className = 'log-entry';
-            logLine.textContent = entry;
-            
-            logEl.appendChild(logLine);
-            logEl.scrollTop = logEl.scrollHeight;
-
-            // Also log to console
-            console.log(message);
         }
 
         // Format numbers with commas
@@ -303,16 +308,6 @@
         function pad(num) {
             return num.toString().padStart(2, '0');
         }
-
-        // Override console.log to capture WASM logs
-        const originalLog = console.log;
-        console.log = function(...args) {
-            originalLog.apply(console, args);
-            const message = args.join(' ');
-            if (message.includes('Stellaris')) {
-                // Already logged by addLog
-            }
-        };
 
         // Initialize on load
         init();
