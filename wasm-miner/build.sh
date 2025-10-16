@@ -10,6 +10,7 @@ echo "🔨 Building Stellaris WASM Miner..."
 if ! command -v cargo &> /dev/null; then
     echo "❌ Rust is not installed, install it now..."
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    source "$HOME/.cargo/env"
     echo "✅ Rust installed successfully"
 fi
 
