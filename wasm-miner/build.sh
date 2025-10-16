@@ -9,9 +9,7 @@ echo "🔨 Building Stellaris WASM Miner..."
 # Check if Rust is installed
 if ! command -v cargo &> /dev/null; then
     echo "❌ Rust is not installed, install it now..."
-    #echo "Install it with: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
-    #exit 1
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
     echo "✅ Rust installed successfully"
 fi
 
@@ -19,8 +17,6 @@ fi
 if ! command -v wasm-pack &> /dev/null; then
     echo "❌ wasm-pack is not installed, installing it now..."
     curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-    #echo "Install it with: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh"
-    #exit 1
     echo "✅ wasm-pack installed successfully"
 fi
 
