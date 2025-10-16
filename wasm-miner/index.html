@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stellaris WASM Miner</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="miner.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>⛏️ Stellaris WASM Miner</h1>
+            <p class="subtitle">Browser-based cryptocurrency miner</p>
+        </header>
+
+        <main>
+            <!-- Configuration Section -->
+            <section class="card">
+                <h2>⚙️ Configuration</h2>
+                <form id="configForm">
+                    <div class="form-group">
+                        <label for="poolUrl">Pool URL</label>
+                        <input 
+                            type="text" 
+                            id="poolUrl" 
+                            value="https://stellaris-pool.connor33341.dev"
+                            placeholder="https://stellaris-pool.connor33341.dev"
+                            required
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="walletAddress">Wallet Address</label>
+                        <input 
+                            type="text" 
+                            id="walletAddress" 
+                            placeholder="Your Stellaris wallet address"
+                            required
+                            minlength="40"
+                        >
+                        <small>Enter your Stellaris wallet address to receive mining rewards</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="workerName">Worker Name (optional)</label>
+                        <input 
+                            type="text" 
+                            id="workerName" 
+                            placeholder="Auto-generated if left empty"
+                        >
+                        <small>Identify this miner in your pool dashboard</small>
+                    </div>
+
+                    <div class="button-group">
+                        <button type="submit" id="startBtn" class="btn btn-primary">
+                            🚀 Start Mining
+                        </button>
+                        <button type="button" id="stopBtn" class="btn btn-danger" disabled>
+                            ⏹️ Stop Mining
+                        </button>
+                    </div>
+                </form>
+            </section>
+
+            <!-- Status Section -->
+            <section class="card">
+                <h2>📊 Mining Status</h2>
+                <div class="status-grid">
+                    <div class="status-item">
+                        <span class="status-label">Status:</span>
+                        <span id="status" class="status-value">Not started</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">Current Block:</span>
+                        <span id="currentBlock" class="status-value">-</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Statistics Section -->
+            <section class="card">
+                <h2>📈 Statistics</h2>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="hashrate">0</div>
+                        <div class="stat-label">H/s</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="totalHashes">0</div>
+                        <div class="stat-label">Total Hashes</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="sharesSubmitted">0</div>
+                        <div class="stat-label">Shares Submitted</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="blocksFound">0</div>
+                        <div class="stat-label">Blocks Found</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="workUnits">0</div>
+                        <div class="stat-label">Work Units</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="uptime">00:00:00</div>
+                        <div class="stat-label">Uptime</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Info Section -->
+            <section class="card info-card">
+                <h2>ℹ️ Information</h2>
+                <ul class="info-list">
+                    <li><strong>Mining Method:</strong> WebAssembly (WASM) for high performance</li>
+                    <li><strong>Browser Requirements:</strong> Modern browser with WASM support</li>
+                    <li><strong>Pool Mining:</strong> Contributes hashpower to a mining pool</li>
+                    <li><strong>Reward Distribution:</strong> Based on shares submitted (proof of work)</li>
+                    <li><strong>Performance:</strong> Keep this tab active for best performance</li>
+                </ul>
+            </section>
+
+            <!-- Log Section -->
+            <section class="card">
+                <h2>📝 Log</h2>
+                <div id="log" class="log-container"></div>
+                <button type="button" id="clearLogBtn" class="btn btn-secondary">Clear Log</button>
+            </section>
+        </main>
+
+        <footer>
+            <p>Stellaris WASM Miner v0.1.0 | Built with Rust & WebAssembly</p>
+            <p><small>Keep this tab open and active for continuous mining</small></p>
+        </footer>
+    </div>
+
+    <script>
+        let miner = null;
+        let logEntries = [];
+        const maxLogEntries = 100;
+
+        // DOM elements
+        const configForm = document.getElementById('configForm');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const clearLogBtn = document.getElementById('clearLogBtn');
+        const poolUrlInput = document.getElementById('poolUrl');
+        const walletAddressInput = document.getElementById('walletAddress');
+        const workerNameInput = document.getElementById('workerName');
+
+        // Status elements
+        const statusEl = document.getElementById('status');
+        const currentBlockEl = document.getElementById('currentBlock');
+
+        // Stat elements
+        const hashrateEl = document.getElementById('hashrate');
+        const totalHashesEl = document.getElementById('totalHashes');
+        const sharesSubmittedEl = document.getElementById('sharesSubmitted');
+        const blocksFoundEl = document.getElementById('blocksFound');
+        const workUnitsEl = document.getElementById('workUnits');
+        const uptimeEl = document.getElementById('uptime');
+
+        // Log element
+        const logEl = document.getElementById('log');
+
+        // Add log entry (used by console.log override and manually)
+        function addLog(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = `[${timestamp}] ${message}`;
+            logEntries.push(entry);
+            if (logEntries.length > maxLogEntries) {
+                logEntries.shift();
+            }
+            const logLine = document.createElement('div');
+            logLine.className = 'log-entry';
+            logLine.textContent = entry;
+            logEl.appendChild(logLine);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        // Override console.log to always add to log panel
+        const originalLog = window.console.log;
+        window.console.log = function(...args) {
+            originalLog.apply(window.console, args);
+            addLog(args.map(String).join(' '));
+        };
+
+        // Prevent form submission from refreshing page - attach IMMEDIATELY
+        configForm.onsubmit = function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            handleFormSubmit();
+            return false;
+        };
+
+        // Initialize miner on page load
+        async function init() {
+            try {
+                console.log('Initializing WASM miner...');
+                // StellarisMiner is now available from miner.js script tag
+                if (typeof StellarisMiner === 'undefined') {
+                    throw new Error('StellarisMiner class not found. Make sure miner.js is loaded.');
+                }
+                miner = new StellarisMiner();
+                await miner.init('./pkg/stellaris_wasm_miner.js');
+                console.log('✅ WASM miner ready');
+            } catch (error) {
+                console.log(`❌ Failed to initialize miner: ${error.message}`);
+                console.log(`Error stack: ${error.stack}`);
+                startBtn.disabled = true;
+                statusEl.textContent = 'Failed to load';
+                statusEl.classList.add('error');
+            }
+        }
+
+        // Handle form submission
+        async function handleFormSubmit() {
+
+            const poolUrl = poolUrlInput.value.trim();
+            const walletAddress = walletAddressInput.value.trim();
+            const workerName = workerNameInput.value.trim() || null;
+
+            if (!poolUrl || !walletAddress) {
+                console.log('❌ Please fill in all required fields');
+                return;
+            }
+
+            if (walletAddress.length < 40) {
+                console.log('❌ Invalid wallet address (too short)');
+                return;
+            }
+
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+            poolUrlInput.disabled = true;
+            walletAddressInput.disabled = true;
+            workerNameInput.disabled = true;
+
+            console.log(`🚀 Starting mining...`);
+            console.log(`   Pool: ${poolUrl}`);
+            console.log(`   Wallet: ${walletAddress.substring(0, 12)}...`);
+
+            try {
+                await miner.startMining(poolUrl, walletAddress, workerName);
+            } catch (error) {
+                console.log(`❌ Failed to start mining: ${error.message}`);
+                stopMining();
+            }
+        }
+
+        // Stop mining
+        stopBtn.addEventListener('click', () => {
+            stopMining();
+        });
+
+        function stopMining() {
+            if (miner) {
+                miner.stopMining();
+            }
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            poolUrlInput.disabled = false;
+            walletAddressInput.disabled = false;
+            workerNameInput.disabled = false;
+            console.log('⏹️ Mining stopped');
+        }
+
+        // Clear log
+        clearLogBtn.addEventListener('click', () => {
+            logEntries = [];
+            logEl.innerHTML = '';
+        });
+
+        // Listen for miner status updates
+        document.addEventListener('miner-status', (e) => {
+            const { message, stats } = e.detail;
+            statusEl.textContent = message;
+            statusEl.classList.remove('error');
+            updateStats(stats);
+        });
+
+        // Update statistics display
+        function updateStats(stats) {
+            if (!stats) return;
+            currentBlockEl.textContent = stats.currentBlock ? `#${stats.currentBlock}` : '-';
+            hashrateEl.textContent = formatNumber(stats.hashrate);
+            totalHashesEl.textContent = formatNumber(stats.totalHashes);
+            sharesSubmittedEl.textContent = formatNumber(stats.sharesSubmitted);
+            blocksFoundEl.textContent = formatNumber(stats.blocksFound);
+            workUnitsEl.textContent = formatNumber(stats.workUnits);
+            uptimeEl.textContent = formatUptime(stats.uptime);
+        }
+
+        // Format numbers with commas
+        function formatNumber(num) {
+            return num.toLocaleString();
+        }
+
+        // Format uptime as HH:MM:SS
+        function formatUptime(seconds) {
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = seconds % 60;
+            return `${pad(h)}:${pad(m)}:${pad(s)}`;
+        }
+
+        function pad(num) {
+            return num.toString().padStart(2, '0');
+        }
+
+        // Initialize on load
+        init();
+    </script>
+</body>
+</html>
